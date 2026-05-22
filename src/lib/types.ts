@@ -2,15 +2,36 @@ export type Lang = "es" | "de" | "fr";
 
 export type Category = "short-stories" | "originals" | "translated-classics";
 
+export interface Chapter {
+  title?: string;
+  text: string;
+}
+
 export interface Book {
   id: string;
   title: string;
   author: string;
   category: Category;
   blurb: string;
-  text: string;
+  text?: string;
+  chapters?: Chapter[];
   sourceUrl?: string;
   sourceLabel?: string;
+}
+
+export interface ReadingProgress {
+  chapterIndex: number;
+  lastRead: number;
+}
+
+export function bookWordCount(book: Book): number {
+  if (book.chapters) {
+    return book.chapters.reduce(
+      (sum, ch) => sum + ch.text.split(/\s+/).filter(Boolean).length,
+      0
+    );
+  }
+  return (book.text ?? "").split(/\s+/).filter(Boolean).length;
 }
 
 export const LANGUAGES: { code: Lang; name: string; native: string; flag: string }[] = [

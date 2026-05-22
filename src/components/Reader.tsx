@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Book, Lang } from "@/lib/types";
 import { useVocab } from "@/lib/vocab";
+import { getStoredProgress, saveStoredProgress } from "@/lib/progress";
 
 interface Token {
   text: string;
@@ -12,7 +13,7 @@ interface Token {
 
 function tokenize(text: string): Token[] {
   const out: Token[] = [];
-  const regex = /([\p{L}\p{M}'’\-]+)|([^\p{L}\p{M}'’\-]+)/gu;
+  const regex = /([\p{L}\p{M}''\-]+)|([^\p{L}\p{M}''\-]+)/gu;
   let m: RegExpExecArray | null;
   let i = 0;
   while ((m = regex.exec(text)) !== null) {
@@ -28,16 +29,40 @@ interface ReaderProps {
 }
 
 export function Reader({ book, lang }: ReaderProps) {
-  const tokens = useMemo(() => tokenize(book.text), [book.text]);
+  const chapters = book.chapters;
+  const totalChapters = chapters?.length ?? 1;
+
+  const [chapterIndex, setChapterIndex] = useState(0);
+  const [progressRestored, setProgressRestored] = useState(false);
+
+  // Restore saved chapter on mount
+  useEffect(() => {
+    if (!chapters) { setProgressRestored(true); return; }
+    const saved = getStoredProgress(lang, book.id);
+    if (saved && saved.chapterIndex < chapters.length) {
+      setChapterIndex(saved.chapterIndex);
+    }
+    setProgressRestored(true);
+  }, [lang, book.id, chapters]);
+
+  // Save progress whenever chapter changes (after initial restore)
+  useEffect(() => {
+    if (!chapters || !progressRestored) return;
+    saveStoredProgress(lang, book.id, { chapterIndex, lastRead: Date.now() });
+  }, [chapterIndex, lang, book.id, chapters, progressRestored]);
+
+  const currentText = chapters ? chapters[chapterIndex].text : (book.text ?? "");
+  const tokens = useMemo(() => tokenize(currentText), [currentText]);
+
   const { upsert, has, get } = useVocab();
-  const [active, setActive] = useState<{ word: string; index: number } | null>(
-    null
-  );
+  const [active, setActive] = useState<{ word: string; index: number } | null>(null);
   const [translation, setTranslation] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const articleRef = useRef<HTMLElement | null>(null);
 
+  // Dismiss popover on outside tap
   useEffect(() => {
     if (!active) return;
     const handler = (e: MouseEvent | TouchEvent) => {
@@ -57,6 +82,14 @@ export function Reader({ book, lang }: ReaderProps) {
     };
   }, [active]);
 
+  // Scroll to top when chapter changes
+  useEffect(() => {
+    articleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActive(null);
+    setTranslation(null);
+    setError(null);
+  }, [chapterIndex]);
+
   async function onWordTap(word: string, index: number) {
     setActive({ word, index });
     setError(null);
@@ -74,9 +107,7 @@ export function Reader({ book, lang }: ReaderProps) {
         body: JSON.stringify({ text: word, sourceLang: lang, targetLang: "EN" }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Translation failed");
-      }
+      if (!res.ok) throw new Error(data.error || "Translation failed");
       setTranslation(data.translation);
       upsert({
         word,
@@ -92,13 +123,51 @@ export function Reader({ book, lang }: ReaderProps) {
     }
   }
 
+  function goToChapter(idx: number) {
+    setChapterIndex(Math.max(0, Math.min(totalChapters - 1, idx)));
+  }
+
+  const chapterTitle = chapters?.[chapterIndex]?.title;
+
   return (
     <div className="relative">
-      <article className="text-lg leading-loose text-neutral-100 select-text">
+      {chapters && (
+        <div className="flex items-center justify-between mb-6 gap-3">
+          <button
+            onClick={() => goToChapter(chapterIndex - 1)}
+            disabled={chapterIndex === 0}
+            className="px-3 py-1.5 rounded-lg border border-neutral-700 text-sm text-neutral-400 disabled:opacity-30 active:bg-neutral-800"
+            aria-label="Previous chapter"
+          >
+            ← Prev
+          </button>
+          <div className="text-center min-w-0">
+            <div className="text-xs text-neutral-500">
+              {chapterIndex + 1} / {totalChapters}
+            </div>
+            {chapterTitle && (
+              <div className="text-xs text-neutral-400 mt-0.5 truncate max-w-[180px]">
+                {chapterTitle}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => goToChapter(chapterIndex + 1)}
+            disabled={chapterIndex === totalChapters - 1}
+            className="px-3 py-1.5 rounded-lg border border-neutral-700 text-sm text-neutral-400 disabled:opacity-30 active:bg-neutral-800"
+            aria-label="Next chapter"
+          >
+            Next →
+          </button>
+        </div>
+      )}
+
+      <article
+        ref={articleRef}
+        className="text-lg leading-loose text-neutral-100 select-text"
+      >
         {tokens.map((t) => {
-          if (!t.isWord) {
-            return <span key={t.index}>{t.text}</span>;
-          }
+          if (!t.isWord) return <span key={t.index}>{t.text}</span>;
           const saved = has(t.text, lang);
           const isActive = active?.index === t.index;
           return (
@@ -120,6 +189,25 @@ export function Reader({ book, lang }: ReaderProps) {
         })}
       </article>
 
+      {chapters && (
+        <div className="flex items-center justify-between mt-10 pt-6 border-t border-neutral-800 gap-3">
+          <button
+            onClick={() => goToChapter(chapterIndex - 1)}
+            disabled={chapterIndex === 0}
+            className="flex-1 py-2.5 rounded-xl border border-neutral-700 text-sm text-neutral-400 disabled:opacity-30 active:bg-neutral-800"
+          >
+            ← Previous
+          </button>
+          <button
+            onClick={() => goToChapter(chapterIndex + 1)}
+            disabled={chapterIndex === totalChapters - 1}
+            className="flex-1 py-2.5 rounded-xl border border-neutral-700 text-sm text-neutral-400 disabled:opacity-30 active:bg-neutral-800"
+          >
+            Next →
+          </button>
+        </div>
+      )}
+
       {active && (
         <div
           ref={popoverRef}
@@ -130,16 +218,10 @@ export function Reader({ book, lang }: ReaderProps) {
               <div className="text-xs uppercase tracking-wider text-neutral-500">
                 {lang.toUpperCase()} → EN
               </div>
-              <div className="text-xl font-semibold mt-0.5 truncate">
-                {active.word}
-              </div>
+              <div className="text-xl font-semibold mt-0.5 truncate">{active.word}</div>
             </div>
             <button
-              onClick={() => {
-                setActive(null);
-                setTranslation(null);
-                setError(null);
-              }}
+              onClick={() => { setActive(null); setTranslation(null); setError(null); }}
               className="text-neutral-500 text-xl leading-none px-2"
               aria-label="Close"
             >
@@ -147,17 +229,13 @@ export function Reader({ book, lang }: ReaderProps) {
             </button>
           </div>
           <div className="mt-3 min-h-[2.5rem]">
-            {loading && (
-              <div className="text-neutral-400 text-sm">Translating…</div>
-            )}
+            {loading && <div className="text-neutral-400 text-sm">Translating…</div>}
             {error && <div className="text-red-400 text-sm">{error}</div>}
             {translation && !loading && (
               <div className="text-base text-neutral-100">{translation}</div>
             )}
           </div>
-          <div className="mt-3 text-xs text-emerald-400">
-            ✓ Saved to vocab
-          </div>
+          <div className="mt-3 text-xs text-emerald-400">✓ Saved to vocab</div>
         </div>
       )}
     </div>
@@ -167,8 +245,5 @@ export function Reader({ book, lang }: ReaderProps) {
 function contextAround(tokens: Token[], index: number, span = 8): string {
   const start = Math.max(0, index - span);
   const end = Math.min(tokens.length, index + span);
-  return tokens
-    .slice(start, end)
-    .map((t) => t.text)
-    .join("");
+  return tokens.slice(start, end).map((t) => t.text).join("");
 }

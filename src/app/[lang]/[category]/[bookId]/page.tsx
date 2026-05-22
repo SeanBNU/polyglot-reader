@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CATEGORIES, LANGUAGES, type Lang } from "@/lib/types";
+import { CATEGORIES, LANGUAGES, bookWordCount, type Lang } from "@/lib/types";
 import { getBook } from "@/data/library";
 import { TopBar } from "@/components/TopBar";
+import { ReadingCTA } from "@/components/ReadingCTA";
 
 export default async function BookPage({
   params,
@@ -15,7 +16,8 @@ export default async function BookPage({
   const book = getBook(lang as Lang, bookId);
   if (!langMeta || !catMeta || !book) notFound();
 
-  const wordCount = book.text.split(/\s+/).filter(Boolean).length;
+  const wordCount = bookWordCount(book);
+  const chapterCount = book.chapters?.length ?? null;
 
   return (
     <>
@@ -38,40 +40,21 @@ export default async function BookPage({
             {book.blurb}
           </p>
           <div className="text-xs text-neutral-500 mt-4">
-            ~{wordCount} words excerpt
+            ~{wordCount.toLocaleString()} words
+            {chapterCount !== null && ` · ${chapterCount} chapters`}
           </div>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
-          <div className="text-lg font-medium">Read now?</div>
-          <p className="text-sm text-neutral-400 mt-1">
-            Tap any word while reading to translate and save it to your vocab.
-          </p>
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            <Link
-              href={`/${lang}/${category}/${bookId}/read`}
-              className="rounded-xl bg-white text-black text-center py-3 font-medium active:bg-neutral-200"
-            >
-              Yes, read
-            </Link>
-            <Link
-              href={`/${lang}/${category}`}
-              className="rounded-xl border border-neutral-700 text-center py-3 font-medium active:bg-neutral-800"
-            >
-              Not now
-            </Link>
-          </div>
-          {book.sourceUrl && (
-            <a
-              href={book.sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block mt-4 text-xs text-neutral-500 underline text-center"
-            >
-              Read full text on {book.sourceLabel ?? "source"} →
-            </a>
-          )}
-        </div>
+        <ReadingCTA
+          lang={lang as Lang}
+          bookId={bookId}
+          category={category}
+          chapterCount={chapterCount}
+          readHref={`/${lang}/${category}/${bookId}/read`}
+          backHref={`/${lang}/${category}`}
+          sourceUrl={book.sourceUrl}
+          sourceLabel={book.sourceLabel}
+        />
       </div>
     </>
   );
